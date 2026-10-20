@@ -1,0 +1,44 @@
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build directories
+build/
+out/
+cmake-build-*/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+
+# Compiled binaries
+*.exe
+*.dll
+*.lib
+*.so
+*.a
+*.o
+*.obj
+
+# Debug/Release output
+Debug/
+Release/
+x64/
+x86/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# ignore muduo
+muduo-2.0.2/
