@@ -7,13 +7,13 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "installDir": "${sourceDir}/install/${presetName}",
+      "cmakeExecutable": "/usr/local/bin/cmake",
       "cacheVariables": {
-        "CMAKE_C_COMPILER": "/usr/bin/gcc",
         "CMAKE_CXX_COMPILER": "/usr/bin/g++"
       },
       "vendor": {
         "microsoft.com/VisualStudioRemoteSettings/CMake/1.0": {
-          "sourceDir": "$env{HOME}/{projectDirName}",
+          "sourceDir": "$env{HOME}/$ms{projectDirName}",
           "remoteMachineName": "WSL",
           "distributionName": "VSRemote"
         }
@@ -34,7 +34,15 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "wsl-asan",
+      "displayName": "WSL Address/UB Sanitizers",
+      "inherits": "wsl-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "REACTORNET_SANITIZERS": true
+      }
     }
   ]
 }
-

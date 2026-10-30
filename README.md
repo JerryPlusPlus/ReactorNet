@@ -1,67 +1,61 @@
 # ReactorNet
 
-围绕 **Reactor 事件驱动、非阻塞 TCP 通信和 one loop per thread 线程模型**，研究 Linux 网络服务端的设计与实现。
+基于 Linux Reactor 的 C++11 网络库：非阻塞 TCP、epoll/poll、每个 I/O 线程一个 EventLoop、
+eventfd 跨线程唤醒、timerfd 定时器、连接缓冲区和异步日志。
 
-当前仓库包含基础组件、网络核心。
+通用设施使用 C++11 标准库的线程、互斥锁、条件变量、原子变量、智能指针、容器和 chrono。
+核心库不依赖 Boost。网络 I/O 与平台信息仍使用 Linux/POSIX 接口。
 
-> 当前代码依赖 Linux/POSIX 接口。在 Windows 上开发时，可使用WSL2。
+## 构建与测试
 
-## 核心能力
+要求 Linux/WSL、支持 C++11 的 GCC/Clang、CMake >= 3.16，以及 Make 或 Ninja。
+回归测试额外需要 Python 3。压缩扩展 `GzipFile` / `ZlibStream` 可选依赖 zlib；核心库不依赖它。
 
-| 方向 | 当前代码中的实现 |
-| --- | --- |
-| 事件驱动 | `EventLoop` 组织事件循环，`Channel` 分发文件描述符事件，`Poller` 封装 I/O 多路复用 |
-| I/O 后端 | 默认使用 `epoll`，同时提供 `poll` 实现 |
-| TCP 通信 | `TcpServer`、`TcpClient`、连接管理、非阻塞读写以及 IPv4/IPv6 地址封装 |
-| 多线程 I/O | 每个 I/O 线程运行自己的 `EventLoop`，新连接默认以轮询方式分配 |
-| 跨线程任务 | 通过任务队列投递回调，使用 `eventfd` 唤醒目标事件循环 |
-| 数据缓冲 | 输入/输出缓冲区、`readv` 分散读、发送剩余数据缓存和高水位回调 |
-| 定时任务 | 基于 `timerfd` 与按到期时间排序的集合，支持单次、周期任务及取消 |
-| 基础组件 | 线程、线程池、互斥锁、条件变量、阻塞队列、时间与文件工具 |
-| 日志 | 流式日志、日志文件滚动，以及后台线程批量写入的异步日志组件 |
-| 扩展模块 | 基础 HTTP 服务、运行状态检查、Protobuf 编解码与 RPC 相关实现 |
-
-TCP 提供字节流传输，应用协议仍需自行处理消息边界。`Buffer` 提供缓冲能力，不会自动完成任意协议的拆包、组包。
-
-## 架构与执行流程
-
-```mermaid
-flowchart TD
-    Client[客户端连接] --> Acceptor[Acceptor 接收连接]
-    Acceptor --> Base[主 EventLoop / TcpServer]
-    Base --> Pool[EventLoopThreadPool 轮询分配]
-    Pool --> LoopA[I/O EventLoop A]
-    Pool --> LoopB[I/O EventLoop B]
-    LoopA --> ConnA[TcpConnection / Buffer / 业务回调]
-    LoopB --> ConnB[TcpConnection / Buffer / 业务回调]
+```bash
+cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build/release -j
+ctest --test-dir build/release --output-on-failure
 ```
 
-配置多个 I/O 线程时，主事件循环接收新连接，随后将连接交给选定的 I/O 事件循环。连接上的读写事件由所属事件循环串行处理。
+只构建库可设置 `-DBUILD_TESTING=OFF -DREACTORNET_BUILD_BENCHMARKS=OFF`。
+不使用 Ninja 时省略 `-G Ninja`。Windows 开发时在 WSL 终端进入项目目录执行上述命令。
 
-`TcpServer::setThreadNum(0)` 为默认的单线程模式，此时接收连接和网络 I/O 都在主事件循环中完成。
-
-一次消息接收的大致调用链为：
-
-```text
-EventLoop::loop()
-  └─ Poller::poll() 等待就绪事件
-      └─ Channel::handleEvent() 分发事件
-          └─ TcpConnection::handleRead() 读取到输入缓冲区
-              └─ messageCallback() 处理业务数据
+```bash
+cmake -S . -B build/asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DREACTORNET_SANITIZERS=ON
+cmake --build build/asan -j
+ctest --test-dir build/asan --output-on-failure
 ```
 
-使用时应避免在 I/O 回调中执行耗时计算或阻塞操作，否则会影响同一事件循环上的其他连接。此类工作可以交给独立的业务线程池，再将结果投递回连接所属的事件循环。
+CMake 目标为 `ReactorNet::base`、`ReactorNet::log`、`ReactorNet::net`。
+在使用 `add_subdirectory` 引入项目的应用中，链接 `ReactorNet::net` 即可传递链接其基础依赖。
 
+## 最小 echo 服务与性能测试
 
-## 构建核心库
+终端 A：
 
-### 环境要求
+```bash
+./build/release/bin/reactornet_echo_server 9981 4 127.0.0.1
+```
 
-- Linux，或 Windows 下的 WSL Linux 环境。
-- 支持 C++11 的 GCC。
-- **CMake 4.0 或以上**，这是当前顶层 `CMakeLists.txt` 声明的最低版本。
-- Make 或 Ninja 等构建工具。
-- Boost 开发头文件，当前构建脚本通过 `find_package(Boost REQUIRED)` 查找。
+终端 B：
 
-Protobuf、Zlib、Boost.Test 等依赖用于对应的扩展模块或测试。构建核心库时不需要启用所有扩展模块。
+```bash
+./build/release/bin/reactornet_bench_client 127.0.0.1 9981 64 1024 30 4 5
+```
 
+上述配置使用 4 个 I/O 工作线程、64 条连接、1 KiB 消息、4 个客户端线程，预热 5 秒后计时 30 秒。
+输出吞吐、错误数、平均 RTT 及 p50/p95/p99。`setThreadNum(0)` 使用主 EventLoop 处理所有 I/O。
+
+完整矩阵、CPU/网络瓶颈分析与测量限制见 [性能测试指南](docs/PERFORMANCE.md)。
+版本与接口迁移见 [C++11 重构说明](docs/MIGRATION.md)。
+
+## 使用约定
+
+TCP 是字节流，应用需要自己定义消息边界；`Buffer` 不会自动完成任意协议的分包。
+连接回调在所属 EventLoop 中串行运行，避免执行阻塞操作；耗时业务可交给 `ThreadPool`，
+再向连接所属循环投递结果。EventLoop/连接/服务端的生命周期必须覆盖投递的异步操作。
+异步日志应在启动后追加，并在退出前 stop，以刷新尾部缓冲。
+
+回归测试覆盖标准库组件、线程启动与失败恢复、定时器、跨线程唤醒、异步日志刷新，
+以及 epoll/poll 后端的 IPv4/IPv6、多连接、大消息、半关闭、重置和 TcpClient 跨线程发送。
+所有库头文件分别单独编译。已有源码中的版权与许可证声明保留。
